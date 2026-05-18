@@ -1,0 +1,36 @@
+Evaluation: cgan_resunet_patchgan_4to8_subarray
+Test samples: 200
+
+pattern_rmse_db: 0.500393
+pattern_mae_db: 0.298196
+pattern_max_error_db: 11.847364
+pattern_pearson_r: 0.998666
+pattern_ssim: 0.998654
+antenna_peak_gain_error_db: 0.789445
+antenna_peak_direction_error_deg: 1.972844
+antenna_peak_theta_error_deg: 1.390000
+antenna_peak_phi_error_deg: 1.895000
+antenna_hpbw_e_error_pct: 18.831093
+antenna_hpbw_h_error_pct: 16.658684
+antenna_sll_error_db: 14.280426
+antenna_sll_error_matched_dominant_db: 0.868215
+antenna_sll_error_matched_mean_db: 0.894927
+null_rmse_at_nulls_db: 0.466328
+null_rmse_at_non_nulls_db: 0.566188
+null_null_depth_error_db: 0.375638
+null_null_fill_accuracy_pct: 99.103910
+null_baseline_rmse_at_nulls_db: 12.157595
+null_baseline_null_depth_error_db: 74.957893
+null_baseline_null_fill_accuracy_pct: 13.828900
+baseline_rmse_db: 13.261894
+baseline_mae_db: 10.412799
+baseline_max_error_db: 90.145625
+baseline_pearson_r: 0.638055
+baseline_ssim: 0.581271
+baseline_antenna_peak_gain_error_db: 0.000000
+baseline_antenna_peak_direction_error_deg: 5.148564
+baseline_antenna_peak_theta_error_deg: 5.080000
+baseline_antenna_peak_phi_error_deg: 1.135000
+baseline_antenna_hpbw_e_error_pct: 76.348468
+baseline_antenna_hpbw_h_error_pct: 110.796043
+baseline_antenna_sll_error_db: 4.032031
