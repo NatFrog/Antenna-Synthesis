@@ -32,7 +32,7 @@ from scipy.ndimage import minimum_filter
 
 from src.config import BATCH_SIZE, DEVICE, NULL_THRESHOLD_DB, PROCESSED_DIR
 from src.evaluation.antenna_metrics import compute_antenna_metric_errors
-from src.training.metrics import compute_batch_metrics
+from src.training.metrics import compute_batch_hfss_region_metrics, compute_batch_metrics
 from scripts.train_cgan_2to4_fusion_no_m4 import (
     ATTN_HEADS,
     GEN_BASE,
@@ -143,9 +143,11 @@ def _build_metrics(
         "depth_error_db": float(np.mean(depth_errs)) if depth_errs else float("nan"),
         "fill_accuracy_pct": float(nfa / max(nft, 1) * 100),
     }
+    paper = compute_batch_hfss_region_metrics(preds, truth_hfss, db_floors=(-40.0, -50.0))
     out: dict[str, float] = {f"pattern_{k}": v for k, v in pm.items()}
     out.update({f"antenna_{k}": v for k, v in avg_ant.items()})
     out.update({f"null_{k}": v for k, v in nm.items()})
+    out.update(paper)
     return out
 
 
@@ -159,7 +161,77 @@ def _load_g(ckpt: Path, sigma_res: float) -> tuple:
 
 
 def _fmt_metric(x: float) -> str:
-    return f"{x:.6f}" if np.isfinite(x) else "nan"
+    return f"{x:.4f}" if np.isfinite(x) else "nan"
+
+
+# Internal metric key -> readable row label (shown in markdown tables)
+METRIC_LABELS: dict[str, str] = {
+    "pattern_rmse_db": "RMSE (full pattern, dB)",
+    "pattern_mae_db": "MAE (full pattern, dB)",
+    "pattern_pearson_r": "Pearson r (full pattern)",
+    "pattern_ssim": "SSIM (full pattern)",
+    "paper_region_rmse_db_neg40_mean": "RMSE where HFSS > -40 dB (mean over test patterns, dB)",
+    "paper_region_mae_db_neg40_mean": "MAE where HFSS > -40 dB (mean over test patterns, dB)",
+    "paper_region_frac_sphere_neg40": "Fraction of sphere with HFSS > -40 dB",
+    "paper_region_rmse_db_neg50_mean": "RMSE where HFSS > -50 dB (mean over test patterns, dB)",
+    "paper_region_mae_db_neg50_mean": "MAE where HFSS > -50 dB (mean over test patterns, dB)",
+    "paper_region_frac_sphere_neg50": "Fraction of sphere with HFSS > -50 dB",
+    "antenna_peak_gain_error_db": "Peak gain error (dB; ~0 after max-norm)",
+    "antenna_peak_direction_error_deg": "Peak direction error (deg)",
+    "antenna_hpbw_e_error_pct": "E-plane HPBW error (%)",
+    "antenna_hpbw_h_error_pct": "H-plane HPBW error (%)",
+    "antenna_sll_error_db": "First sidelobe level error (dB)",
+    "null_rmse_at_nulls_db": "RMSE in nulls (Matlab < peak - 20 dB, dB)",
+    "null_depth_error_db": "Null depth error (deepest nulls, dB)",
+    "null_fill_accuracy_pct": "Null fill accuracy (%, correction within 2 dB)",
+}
+
+METRIC_ROW_ORDER: list[str] = [
+    "pattern_rmse_db",
+    "pattern_mae_db",
+    "pattern_pearson_r",
+    "pattern_ssim",
+    "paper_region_rmse_db_neg40_mean",
+    "paper_region_mae_db_neg40_mean",
+    "paper_region_frac_sphere_neg40",
+    "paper_region_rmse_db_neg50_mean",
+    "paper_region_mae_db_neg50_mean",
+    "paper_region_frac_sphere_neg50",
+    "antenna_peak_direction_error_deg",
+    "antenna_hpbw_e_error_pct",
+    "antenna_hpbw_h_error_pct",
+    "antenna_sll_error_db",
+    "null_rmse_at_nulls_db",
+    "null_depth_error_db",
+    "null_fill_accuracy_pct",
+]
+
+
+def _label(key: str) -> str:
+    return METRIC_LABELS.get(key, key)
+
+
+def _parse_scales(spec: str) -> list[tuple[str, str]]:
+    """Return (short header, internal scale label) for each requested scale."""
+    all_scales = {
+        "4": ("4x4", "4x4 (2to4 test)"),
+        "4x4": ("4x4", "4x4 (2to4 test)"),
+        "8": ("8x8", "8x8 (4to8 test)"),
+        "8x8": ("8x8", "8x8 (4to8 test)"),
+        "16": ("16x16", "16x16 (test_16x16)"),
+        "16x16": ("16x16", "16x16 (test_16x16)"),
+    }
+    if spec.strip().lower() == "all":
+        return [all_scales["4x4"], all_scales["8x8"], all_scales["16x16"]]
+    parts = [p.strip().lower() for p in spec.split(",")]
+    out = []
+    for p in parts:
+        if p not in all_scales:
+            raise ValueError(f"Unknown scale {p!r}; use 4x4, 8x8, 16x16, or all")
+        pair = all_scales[p]
+        if pair not in out:
+            out.append(pair)
+    return out
 
 
 def main() -> None:
@@ -174,9 +246,23 @@ def main() -> None:
         "--checkpoint",
         type=str,
         default="",
-        help="Single EMA checkpoint: emit 3 tables (Metric | Value). Empty = bootstrap A vs C.",
+        help="Single EMA checkpoint. Empty = bootstrap A vs C.",
+    )
+    ap.add_argument(
+        "--wide",
+        action="store_true",
+        help="One table: readable metric rows; columns = scales from --scales (needs 2+ scales).",
+    )
+    ap.add_argument(
+        "--scales",
+        type=str,
+        default="16x16",
+        help="Comma-separated scales to evaluate: 4x4, 8x8, 16x16, or all (default: 16x16 only).",
     )
     args = ap.parse_args()
+    scale_cols = _parse_scales(args.scales)
+    if not scale_cols:
+        scale_cols = _parse_scales("16x16")
 
     req_data = (
         H5_2TO4,
@@ -225,20 +311,7 @@ def main() -> None:
     with h5py.File(H5_4TO8, "r") as f:
         meta16 = f["metadata"][test16_idx].astype(np.float32)
 
-    pattern_keys = ["pattern_rmse_db", "pattern_mae_db", "pattern_pearson_r", "pattern_ssim"]
-    ant_keys = [
-        "antenna_peak_gain_error_db",
-        "antenna_peak_direction_error_deg",
-        "antenna_hpbw_e_error_pct",
-        "antenna_hpbw_h_error_pct",
-        "antenna_sll_error_db",
-    ]
-    null_keys = [
-        "null_rmse_at_nulls_db",
-        "null_depth_error_db",
-        "null_fill_accuracy_pct",
-    ]
-    all_keys = pattern_keys + ant_keys + null_keys
+    all_keys = METRIC_ROW_ORDER
 
     if args.checkpoint:
         ckpt = Path(args.checkpoint)
@@ -248,27 +321,52 @@ def main() -> None:
             raise FileNotFoundError(ckpt)
         print(f"\n=== Evaluating {ckpt} ===", flush=True)
         G, recon = _load_g(ckpt, sigma_res)
-        pred4 = _synth_scale(G, recon, mat4, a4, meta4, mean_mat, std_mat, 4)
-        pred8 = _synth_scale(G, recon, mat8, a8, meta8, mean_mat, std_mat, 8)
-        pred16 = _synth_scale(G, recon, test_mat16, a16, meta16, mean_mat, std_mat, 16)
-        one: dict[str, dict[str, float]] = {
-            "4x4 (2to4 test)": _build_metrics(pred4, hf4, mat4),
-            "8x8 (4to8 test)": _build_metrics(pred8, hf8, mat8),
-            "16x16 (test_16x16)": _build_metrics(pred16, hf16, test_mat16),
-        }
+        one: dict[str, dict[str, float]] = {}
+        scale_notes: list[str] = []
+        for short, scale_label in scale_cols:
+            if scale_label.startswith("4x4"):
+                pred = _synth_scale(G, recon, mat4, a4, meta4, mean_mat, std_mat, 4)
+                one[scale_label] = _build_metrics(pred, hf4, mat4)
+                scale_notes.append(f"- **4x4**: n={len(te4)} (2to4 test), truth `hfss_4x4`, anchor `hfss_pred_2x2`")
+            elif scale_label.startswith("8x8"):
+                pred = _synth_scale(G, recon, mat8, a8, meta8, mean_mat, std_mat, 8)
+                one[scale_label] = _build_metrics(pred, hf8, mat8)
+                scale_notes.append(
+                    f"- **8x8**: n={len(test48)} (4to8 test), truth `hfss_8x8`, anchor `hfss_pred_4x4`"
+                )
+            else:
+                pred = _synth_scale(G, recon, test_mat16, a16, meta16, mean_mat, std_mat, 16)
+                one[scale_label] = _build_metrics(pred, hf16, test_mat16)
+                scale_notes.append(
+                    f"- **16x16**: n={len(test16_idx)} (held-out test_16x16), truth `hfss_16x16`, "
+                    f"anchor `hfss_pred_8x8`, analytical `matlab_16x16`"
+                )
         lines = [
-            "# Single-checkpoint residual evaluation (held-out test splits)\n",
+            "# Residual model evaluation (held-out test)\n",
             f"- Checkpoint: `{ckpt.relative_to(PROJECT_ROOT)}`\n",
-            f"- 4x4: n={len(te4)} (2to4 test), 8x8: n={len(test48)} (4to8 test), "
-            f"16x16: n={len(test16_idx)} (honest test_16x16)\n",
+            *scale_notes,
+            "- **Region metrics**: RMSE/MAE only where ground-truth HFSS exceeds the dB floor "
+            "(main beam + sidelobes, not deep nulls).\n",
+            "- **Null metrics**: pixels where Matlab pattern is more than 20 dB below its peak.\n",
         ]
-        for scale_label in one:
-            lines.append(f"\n## {scale_label}\n")
-            lines.append("| Metric | Value |")
-            lines.append("|--------|-------|")
+        use_wide = args.wide and len(scale_cols) > 1
+        if use_wide:
+            hdr = " | ".join(short for short, _ in scale_cols)
+            sep = " | ".join("---" for _ in scale_cols)
+            lines.append(f"\n| Metric | {hdr} |")
+            lines.append(f"|--------|{sep}|")
             for k in all_keys:
-                v = one[scale_label].get(k, float("nan"))
-                lines.append(f"| {k} | {_fmt_metric(v)} |")
+                cells = [_fmt_metric(one[label].get(k, float("nan"))) for _, label in scale_cols]
+                lines.append(f"| {_label(k)} | {' | '.join(cells)} |")
+        else:
+            for short, scale_label in scale_cols:
+                title = f"16x16 extrapolation (test_16x16)" if "16x16" in scale_label else scale_label
+                lines.append(f"\n## {title}\n")
+                lines.append("| Metric | Value |")
+                lines.append("|--------|-------|")
+                for k in all_keys:
+                    v = one[scale_label].get(k, float("nan"))
+                    lines.append(f"| {_label(k)} | {_fmt_metric(v)} |")
         md = "\n".join(lines)
         print(md, flush=True)
         if args.out:
@@ -285,23 +383,22 @@ def main() -> None:
             raise FileNotFoundError(p)
 
     results: dict[str, dict[str, dict[str, float]]] = {
-        "4x4 (2to4 test)": {"Phase A": {}, "Phase C": {}},
-        "8x8 (4to8 test)": {"Phase A": {}, "Phase C": {}},
-        "16x16 (test_16x16)": {"Phase A": {}, "Phase C": {}},
+        label: {"Phase A": {}, "Phase C": {}} for _, label in scale_cols
     }
 
     for ckpt_name, ckpt in [("Phase A", CKPT_A), ("Phase C", CKPT_C)]:
         print(f"\n=== Evaluating {ckpt_name}: {ckpt} ===", flush=True)
         G, recon = _load_g(ckpt, sigma_res)
-        pred4 = _synth_scale(G, recon, mat4, a4, meta4, mean_mat, std_mat, 4)
-        pred8 = _synth_scale(G, recon, mat8, a8, meta8, mean_mat, std_mat, 8)
-        pred16 = _synth_scale(G, recon, test_mat16, a16, meta16, mean_mat, std_mat, 16)
-
-        results["4x4 (2to4 test)"][ckpt_name] = _build_metrics(pred4, hf4, mat4)
-        results["8x8 (4to8 test)"][ckpt_name] = _build_metrics(pred8, hf8, mat8)
-        results["16x16 (test_16x16)"][ckpt_name] = _build_metrics(
-            pred16, hf16, test_mat16
-        )
+        for _short, scale_label in scale_cols:
+            if scale_label.startswith("4x4"):
+                pred = _synth_scale(G, recon, mat4, a4, meta4, mean_mat, std_mat, 4)
+                results[scale_label][ckpt_name] = _build_metrics(pred, hf4, mat4)
+            elif scale_label.startswith("8x8"):
+                pred = _synth_scale(G, recon, mat8, a8, meta8, mean_mat, std_mat, 8)
+                results[scale_label][ckpt_name] = _build_metrics(pred, hf8, mat8)
+            else:
+                pred = _synth_scale(G, recon, test_mat16, a16, meta16, mean_mat, std_mat, 16)
+                results[scale_label][ckpt_name] = _build_metrics(pred, hf16, test_mat16)
 
     lines = [
         "# Bootstrap Phase A vs Phase C (held-out test splits)\n",
@@ -310,14 +407,19 @@ def main() -> None:
         f"16x16: n={len(test16_idx)} (honest test_16x16)\n",
     ]
 
-    for scale_label in results:
-        lines.append(f"\n## {scale_label}\n")
+    bootstrap_scales = [label for _, label in scale_cols if label in results]
+    if not bootstrap_scales:
+        bootstrap_scales = list(results.keys())
+
+    for scale_label in bootstrap_scales:
+        title = "16x16 extrapolation (test_16x16)" if "16x16" in scale_label else scale_label
+        lines.append(f"\n## {title}\n")
         lines.append("| Metric | Phase A | Phase C |")
         lines.append("|--------|---------|---------|")
         for k in all_keys:
             va = results[scale_label]["Phase A"].get(k, float("nan"))
             vc = results[scale_label]["Phase C"].get(k, float("nan"))
-            lines.append(f"| {k} | {_fmt_metric(va)} | {_fmt_metric(vc)} |")
+            lines.append(f"| {_label(k)} | {_fmt_metric(va)} | {_fmt_metric(vc)} |")
 
     md = "\n".join(lines)
     print(md, flush=True)
