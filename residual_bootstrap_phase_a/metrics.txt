@@ -1,0 +1,55 @@
+Multi-scale residual cGAN (5-channel with-anchor) — final evaluation
+Checkpoint: checkpoints\residual_bootstrap_phase_a\best_generator.pt
+sigma_residual: 10.1102 dB
+
+--- VAL_16X16 (selection set) ---
+pattern_rmse_db: 6.252731
+pattern_mae_db: 4.608868
+pattern_max_error_db: 45.562679
+pattern_pearson_r: 0.859775
+pattern_ssim: 0.857073
+antenna_peak_gain_error_db: 0.000000
+antenna_peak_direction_error_deg: 0.770639
+antenna_peak_theta_error_deg: 0.560000
+antenna_peak_phi_error_deg: 7.670000
+antenna_hpbw_e_error_pct: 5.864251
+antenna_hpbw_h_error_pct: 5.192729
+antenna_sll_error_db: 2.453308
+null_rmse_at_nulls_db: 6.305897
+null_null_depth_error_db: 17.633984
+null_null_fill_accuracy_pct: 32.173366
+
+--- TEST_16X16 (HELD-OUT honest) ---
+pattern_rmse_db: 6.378556
+pattern_mae_db: 4.735864
+pattern_max_error_db: 45.279279
+pattern_pearson_r: 0.861889
+pattern_ssim: 0.859184
+antenna_peak_gain_error_db: 0.000000
+antenna_peak_direction_error_deg: 0.652201
+antenna_peak_theta_error_deg: 0.470000
+antenna_peak_phi_error_deg: 0.540000
+antenna_hpbw_e_error_pct: 5.228173
+antenna_hpbw_h_error_pct: 4.381406
+antenna_sll_error_db: 2.566922
+null_rmse_at_nulls_db: 6.435080
+null_null_depth_error_db: 17.881912
+null_null_fill_accuracy_pct: 31.105105
+
+--- BASELINE_TEST (matlab_16x16 alone) ---
+pattern_rmse_db: 11.297561
+pattern_mae_db: 7.350589
+pattern_max_error_db: 102.680312
+pattern_pearson_r: 0.818217
+pattern_ssim: 0.750745
+antenna_peak_gain_error_db: 0.000000
+antenna_peak_direction_error_deg: 0.364657
+antenna_peak_theta_error_deg: 0.290000
+antenna_peak_phi_error_deg: 0.150000
+antenna_hpbw_e_error_pct: 1.303813
+antenna_hpbw_h_error_pct: 0.934141
+antenna_sll_error_db: 3.330586
+null_rmse_at_nulls_db: 11.413649
+null_null_depth_error_db: 87.739517
+null_null_fill_accuracy_pct: 27.039873
+
