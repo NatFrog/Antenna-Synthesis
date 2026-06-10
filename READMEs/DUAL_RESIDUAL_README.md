@@ -1,6 +1,6 @@
 # Dual-Scale Coupling Model — Design
 
-Two-component architecture for zero-shot pattern synthesis at 8×8 / 16×16 while training **only** on 2×2, 4×4, and 6×6 HFSS.
+Two-component architecture for pattern synthesis at 8×8 / 16×16 while training **only** on 2×2, 4×4, and 6×6 HFSS.
 
 **Code:** `src/models/dual_residual.py`  
 **Prep:** `scripts/prep_dual_residual_train.py`  
