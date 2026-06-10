@@ -150,12 +150,6 @@ Fit scalar `α` (or regional α like v5) on a small train split at the target sc
 
 ---
 
-## Why not spatial quadrant heads?
-
-Mutual coupling crosses sub-block boundaries; the repo already factorises spatially via **9 sub-block types** (corner/edge/interior). v4’s regional heads split by **radiation region** (main/null/E/H cuts), which matches where compose fails without forcing angular seams.
-
----
-
 ## Pipeline
 
 ```bash
